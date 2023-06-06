@@ -1,5 +1,5 @@
 pub trait RuntimeModule {
-    fn initialize(&mut self) -> i8;
+    fn initialize(&mut self);
 
     fn finalize(&self);
 
