@@ -6,6 +6,7 @@ use winit::{
 use super::{
     runtime::{Application, RuntimeModule},
     window::WintWindows,
+    render::State,
 };
 
 pub struct BaseApplication {
@@ -24,12 +25,14 @@ impl Default for BaseApplication {
     }
 }
 
+// #[async_trait]
 impl RuntimeModule for BaseApplication {
     fn initialize(&mut self) {
         self.is_quit = false;
 
         let event_loop = EventLoop::new();
         let window = WintWindows::new(&event_loop);
+        let mut state = futures_lite::future::block_on(State::new(&window.window));
 
         let event_handler = move |event: Event<()>,
                                   _: &EventLoopWindowTarget<()>,
@@ -38,11 +41,23 @@ impl RuntimeModule for BaseApplication {
 
             match event {
                 Event::WindowEvent {
-                    event: WindowEvent::CloseRequested,
-                    ..
+                    ref event,
+                    window_id: _,
                 } => {
-                    println!("The close button was pressed; stopping");
-                    control_flow.set_exit();
+                    match event {
+                        WindowEvent::CloseRequested => {
+                            println!("WindowEvent::CloseRequested");
+                            control_flow.set_exit();
+                        }
+                        WindowEvent::Resized(physical_size) => {
+                            state.resize(*physical_size);
+                        }
+                        WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+                            // new_inner_size is &&mut so we have to dereference it twice
+                            state.resize(**new_inner_size);
+                        }
+                        _ => {}
+                    }
                 }
                 Event::MainEventsCleared => {
                     // Application update code.
@@ -55,11 +70,16 @@ impl RuntimeModule for BaseApplication {
                     window.window.request_redraw();
                 }
                 Event::RedrawRequested(_) => {
-                    // Redraw the application.
-                    //
-                    // It's preferable for applications that do not render continuously to render in
-                    // this event rather than in MainEventsCleared, since rendering in here allows
-                    // the program to gracefully handle redraws requested by the OS.
+                    state.update();
+                    match state.render() {
+                        Ok(_) => {}
+                        // Recreate the swap_chain if lost
+                        Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
+                        // The system is out of memory, we should probably quit
+                        Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
+                        // All other errors (Outdated, Timeout) should be resolved by the next frame
+                        Err(e) => eprintln!("{:?}", e),
+                    }
                 }
                 _ => (),
             }
